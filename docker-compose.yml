@@ -1,0 +1,88 @@
+# Local Minecraft server, resource-capped to mimic Hetzner CPX21 / CPX31.
+#
+# Usage:
+#   docker compose --profile cpx21 up -d      # 3 vCPU / 4GB RAM (CPX21 sim)
+#   docker compose --profile cpx31 up -d      # 4 vCPU / 8GB RAM (CPX31 sim)
+#   docker compose --profile <name> down
+#
+# JVM heap is deliberately set below the container memory cap so the container
+# has headroom for the JVM's non-heap regions (metaspace, code cache, direct
+# buffers, thread stacks) and Linux page cache. Running the JVM with -Xmx
+# equal to the cgroup limit will get you OOM-killed under load.
+#
+# World data lives in ./minecraft/data on the host. When we migrate to Hetzner
+# this same path will be the mount point for object-storage-backed volume.
+
+x-mc-common: &mc-common
+  image: itzg/minecraft-server:java21
+  stdin_open: true
+  tty: true
+  ports:
+    - "25565:25565"
+    - "25575:25575"   # RCON
+  volumes:
+    - ./minecraft/data:/data
+  environment: &mc-env
+    EULA: "TRUE"
+    TYPE: "VANILLA"
+    VERSION: "LATEST"
+    # RCON — used by the Phase 2 benchmark harness and the Phase 3 bot API.
+    ENABLE_RCON: "true"
+    RCON_PASSWORD: "${RCON_PASSWORD:-changeme_local_only}"
+    RCON_PORT: "25575"
+    # World gen / gameplay defaults suitable for <10 players.
+    DIFFICULTY: "normal"
+    MAX_PLAYERS: "10"
+    VIEW_DISTANCE: "10"
+    SIMULATION_DISTANCE: "8"
+    # itzg image quirk: setting MEMORY leaves both -Xmx and -Xms up to the
+    # entrypoint. We prefer to set INIT_MEMORY / MAX_MEMORY explicitly so the
+    # values match the tier we're benchmarking.
+    USE_AIKAR_FLAGS: "true"
+    # Auto-shutdown handled by the Phase 3 bot, NOT by the itzg image, so we
+    # can wire the shutdown flow (world backup → confirm → stop) ourselves.
+  restart: "no"
+
+services:
+  # ---- CPX21 simulation: 3 vCPU, 4 GB RAM ----
+  # JVM heap: 3 GB (~750 MB left for OS/JVM overhead + page cache)
+  mc-cpx21:
+    <<: *mc-common
+    container_name: mc-cpx21
+    profiles: ["cpx21"]
+    environment:
+      <<: *mc-env
+      INIT_MEMORY: "2G"
+      MAX_MEMORY: "3G"
+    deploy:
+      resources:
+        limits:
+          cpus: "3.0"
+          memory: 4G
+        reservations:
+          memory: 2G
+    # Docker Desktop (Windows) honors `deploy.resources.limits` on compose v2
+    # for `docker compose up` since ~v2.15; the mem_limit/cpus fallbacks below
+    # are kept for older engines.
+    mem_limit: 4g
+    cpus: 3.0
+
+  # ---- CPX31 simulation: 4 vCPU, 8 GB RAM ----
+  # JVM heap: 6 GB (~2 GB left for OS/JVM overhead + page cache)
+  mc-cpx31:
+    <<: *mc-common
+    container_name: mc-cpx31
+    profiles: ["cpx31"]
+    environment:
+      <<: *mc-env
+      INIT_MEMORY: "4G"
+      MAX_MEMORY: "6G"
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8G
+        reservations:
+          memory: 4G
+    mem_limit: 8g
+    cpus: 4.0

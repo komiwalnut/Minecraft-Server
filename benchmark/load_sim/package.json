@@ -1,0 +1,17 @@
+{
+  "name": "mc-load-sim",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mineflayer-based bot swarm for load-testing the local Minecraft server.",
+  "main": "bots.js",
+  "scripts": {
+    "start": "node bots.js"
+  },
+  "dependencies": {
+    "mineflayer": "^4.20.1",
+    "mineflayer-pathfinder": "^2.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

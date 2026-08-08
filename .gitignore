@@ -141,3 +141,34 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# ---------- Minecraft-Server project ----------
+
+# World data — never commit save files, they can be huge.
+minecraft/data/
+minecraft/backup/
+
+# Reference clone of the Discord bot (Jobbilee). Read-only, not our code.
+reference/
+
+# Benchmark output.
+benchmark/reports/*.csv
+benchmark/reports/*.json
+benchmark/reports/comparison.md
+
+# Local overrides.
+.env
+.env.local
+docker-compose.override.yml
+
+# Python (benchmark harness).
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / editor.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
