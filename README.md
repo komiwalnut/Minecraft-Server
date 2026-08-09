@@ -6,7 +6,7 @@ Local-first development for a Discord-triggered Minecraft server that will event
 
 - **Phase 1 — Local Docker with tier simulation:** done. Two Compose profiles cap CPU + memory to mimic Hetzner CPX21 (3 vCPU / 4 GB) and CPX31 (4 vCPU / 8 GB).
 - **Phase 2 — Benchmark harness:** done. RCON-based TPS logger, Mineflayer load simulator, comparison report generator.
-- **Phase 3 — Discord bot integration:** planned in `docs/PHASE3-PLAN.md`, not yet implemented.
+- **Phase 3 — Discord bot + control-API:** done. New standalone MC bot in `bot/` (discord.js v14), FastAPI control-API in `control-api/` with pluggable Docker/Hetzner backends. Hetzner backend is stubbed with clear TODOs; migration is a `MODE=local`→`MODE=hetzner` env flip when you're ready.
 
 ## Prerequisites
 

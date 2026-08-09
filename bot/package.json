@@ -1,0 +1,17 @@
+{
+  "name": "mc-server-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Discord bot for the on-demand Minecraft server. Slash commands only; delegates all infra work to the control-API.",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.0",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
