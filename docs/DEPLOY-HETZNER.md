@@ -197,12 +197,11 @@ docker compose --profile cpx31 down
 
 The "you only pay when someone plays" architecture. A tiny always-on controller runs the control-API and the Discord bot. When someone hits `/start-server`, the controller calls Hetzner's API to provision an MC VPS from a snapshot, boots it with the latest world pulled from Object Storage, and hands the connection info back to the user. `/stop-server` uploads the world back to Object Storage and destroys the MC VPS.
 
-### When it's worth the extra work
+### When it's worth the extra complexity
 
-- Server runs less than ~10–14 hours/day on average.
-- You're willing to write ~200 lines of Python against the Hetzner API and boto3.
+Server runs less than ~10–14 hours/day on average. Below that usage, Model A is simpler and comparably priced.
 
-Below that usage, Model A is simpler and comparably priced.
+The code is already written — `control-api/backends/hetzner.py` implements the backend, and `deploy/bootstrap.sh` + `deploy/shutdown.sh` handle the VPS-side lifecycle. What's left is one-time Hetzner setup (account, keys, bucket, snapshot) and configuring the controller.
 
 ### Architecture
 
@@ -219,112 +218,96 @@ Discord ──▶ Bot (Render, ~free)
               └─ Hetzner Object Storage ──▶ world backups
 ```
 
-### Prerequisites (do these once)
+### One-time Hetzner setup
 
-**1. Do Model A first.** You need a working Model A deployment to snapshot from.
+Do these in order. Full clicks-and-values recipe: [../deploy/BUILD-SNAPSHOT.md](../deploy/BUILD-SNAPSHOT.md).
 
-**2. Create a snapshot.** Once Model A works: `docker compose --profile cpx21 down` on the VPS, then Console → server → **Snapshots → Create Snapshot**. Note the numeric snapshot ID → goes into `HETZNER_SNAPSHOT_ID` in the controller's `.env`.
+**1. SSH key.** Console → **Security → SSH Keys → Add SSH Key**. Paste your public key. Record the numeric ID → `HETZNER_SSH_KEY_ID`.
 
-**3. Create an Object Storage bucket.** Console → **Object Storage → Create Bucket**. Region: sgp1. Note endpoint, bucket name, access key, secret key → goes into the `HETZNER_S3_*` fields.
+**2. API token.** Console → **Security → API Tokens → Generate API Token** with Read + Write scope → `HETZNER_API_TOKEN`.
 
-**4. Create a Hetzner API token.** Console → **Security → API Tokens** → Create with **Read & Write** scope → into `HETZNER_API_TOKEN`.
+**3. Object Storage bucket.** Console → **Object Storage → Create Bucket**, region sgp1. From the bucket detail: endpoint URL, name, access key, secret key → `HETZNER_S3_*`.
 
-**5. Provision the controller box.** A separate small VPS (CX22, ~€4/month) is enough. Install the code the same way as Model A, but only run the control-API on it — no MC container. Also install the Discord bot here if you don't want to use Render.
+**4. Build the snapshot.** Follow [../deploy/BUILD-SNAPSHOT.md](../deploy/BUILD-SNAPSHOT.md): provision an Ubuntu 24.04 CPX21, install Docker + this repo + `bootstrap.sh`/`shutdown.sh`, snapshot it. Snapshot ID → `HETZNER_SNAPSHOT_ID`. Destroy the base VPS after snapshotting — you'll never boot into it directly again.
 
-**6. Bake a bootstrap script into the snapshot.** The snapshot needs a `/opt/mc/bootstrap.sh` that runs on boot to pull the world and start MC:
+### Set up the controller box (Hetzner CX22)
+
+**Provision.** Console → New Server → Location sgp1 → Ubuntu 24.04 → Type **CX22** → your SSH key → name `mc-controller`.
+
+**Install control-API on it:**
 
 ```bash
-#!/bin/bash
-# /opt/mc/bootstrap.sh — runs on VPS boot via cloud-init.
-set -euo pipefail
+ssh root@<controller-ip>
 
-# Read S3 creds passed in via cloud-init user-data.
-source /opt/mc/s3.env
+apt update
+apt install -y python3-venv python3-pip git
 
-# Sync latest world down from Object Storage.
-apt install -y awscli
-aws --endpoint-url "$HETZNER_S3_ENDPOINT" s3 sync \
-    "s3://$HETZNER_S3_BUCKET/$HETZNER_S3_WORLD_PREFIX" \
-    /opt/mc/minecraft/data/
+git clone https://github.com/komiwalnut/Minecraft-Server.git /opt/mc
+cd /opt/mc/control-api
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+deactivate
 
-# Start the MC container.
+# Root .env — this is what the control-API reads.
 cd /opt/mc
-docker compose --profile "${TIER:-cpx21}" up -d
+cp .env.example .env
+nano .env
+# Set:
+#   MODE=hetzner
+#   RCON_PASSWORD=<strong random>
+#   CONTROL_API_TOKEN=<strong random>
+#   HETZNER_API_TOKEN=<from step 2>
+#   HETZNER_SNAPSHOT_ID=<from step 4>
+#   HETZNER_SSH_KEY_ID=<from step 1>
+#   HETZNER_SSH_PRIVATE_KEY_PATH=/root/.ssh/id_ed25519   (see below)
+#   HETZNER_S3_* fields from step 3
+
+# SSH private key: the controller uses this to SSH into MC VPS on shutdown.
+# Copy or generate; make sure the corresponding public key is what you
+# added in step 1.
+ls -l /root/.ssh/id_ed25519
 ```
 
-Re-snapshot the VPS after adding this file. Set `HETZNER_SNAPSHOT_ID` to the new snapshot.
+**Systemd unit** at `/etc/systemd/system/mc-control-api.service`:
 
-### What you need to implement
+```ini
+[Unit]
+Description=MC control-API
+After=network.target
 
-`control-api/backends/hetzner.py` currently raises `NotImplementedError` for all three methods. Fill them in:
+[Service]
+Type=simple
+WorkingDirectory=/opt/mc/control-api
+Environment="PATH=/opt/mc/control-api/.venv/bin:/usr/bin"
+EnvironmentFile=/opt/mc/.env
+ExecStart=/opt/mc/control-api/.venv/bin/uvicorn server:app --host 0.0.0.0 --port 8080
+Restart=on-failure
+User=root
 
-**`start(tier)`** — provision a VPS and wait for it to be ready.
-
-```python
-# Pseudo-code sketch
-def start(self, tier):
-    # 1. Call Hetzner API to create the server.
-    resp = httpx.post(
-        "https://api.hetzner.cloud/v1/servers",
-        headers={"Authorization": f"Bearer {self.token}"},
-        json={
-            "name": self.server_name,
-            "server_type": tier,
-            "image": int(self.snapshot_id),
-            "location": self.location,
-            "ssh_keys": [int(self.ssh_key_id)],
-            "user_data": self._bootstrap_userdata(tier),  # cloud-init to write s3.env then run bootstrap.sh
-        },
-    )
-    self._server_id = resp.json()["server"]["id"]
-    self._public_ip = resp.json()["server"]["public_net"]["ipv4"]["ip"]
-    # 2. Return quickly — status() will report starting until RCON answers.
+[Install]
+WantedBy=multi-user.target
 ```
-
-**`stop(backup)`** — sync world to Object Storage, verify, then destroy the VPS.
-
-```python
-def stop(self, backup=True):
-    # 1. SSH in (or hit a small VPS-local endpoint) to run: docker exec mc-* rcon-cli save-all flush.
-    # 2. If backup: aws s3 sync minecraft/data/ s3://.../worlds/latest/ — verify object count.
-    # 3. If backup verification passed:
-    httpx.delete(
-        f"https://api.hetzner.cloud/v1/servers/{self._server_id}",
-        headers={"Authorization": f"Bearer {self.token}"},
-    )
-    self._server_id = None
-```
-
-**`status()`** — VPS state + RCON player count.
-
-```python
-def status(self):
-    if not self._server_id:
-        return ServerStatus(state=ServerState.STOPPED)
-    resp = httpx.get(
-        f"https://api.hetzner.cloud/v1/servers/{self._server_id}",
-        headers={"Authorization": f"Bearer {self.token}"},
-    ).json()
-    hz_state = resp["server"]["status"]  # "running", "starting", "off", ...
-    if hz_state != "running":
-        return ServerStatus(state=ServerState.STARTING, tier=..., message=hz_state)
-    # If running, query RCON on the VPS's public IP.
-    with MCRcon(self._public_ip, self._rcon_password, port=25575, timeout=3) as r:
-        r = r.command("list")
-    # parse and return ServerStatus(state=RUNNING, player_count=..., players=...)
-```
-
-### Switching over
 
 ```bash
-# On the controller box:
-# 1. Fill in all HETZNER_* fields in .env.
-# 2. Change MODE=local -> MODE=hetzner.
-# 3. Restart the control-API.
-systemctl restart mc-control-api
+systemctl daemon-reload
+systemctl enable --now mc-control-api
+journalctl -u mc-control-api -f
 ```
 
-The bot doesn't know or care. Same URLs, same auth.
+**Firewall.** Console → **Firewalls → Create Firewall**. Attach to the controller:
+
+- TCP 22 (SSH) — from your home IP
+- TCP 8080 (control-API) — from Anywhere (bearer token is the auth)
+
+For the MC VPS: no persistent firewall needed since each VPS is short-lived. Alternatively, create a second firewall with TCP 25565 open to Anywhere + TCP 25575 open from the controller IP, and label MC VPSes so the firewall auto-applies. The current code doesn't set this up — you'd add `firewalls: [<id>]` to the server-create body in `hetzner.py::_create_server`.
+
+**Point the Render bot at the controller.** Render dashboard → your bot service → Environment:
+
+- `CONTROL_API_URL` = `http://<controller-ip>:8080`
+- `CONTROL_API_TOKEN` = matching value from controller's `.env`
+
+Redeploy is automatic. HTTPS-via-Caddy same as Model A's HTTPS section if you want it.
 
 ### Cost outline (Model B)
 
@@ -339,9 +322,11 @@ Compare Model A CPX21: ~€8. Model B wins when actual server-up hours drop belo
 
 ### Gotchas
 
-- **First boot from snapshot is slow.** Cloud-init needs to run, world needs to download from S3, MC needs to start. Expect 3–5 min. The bot's poll timeout is 5 min — you may want to bump it.
-- **World corruption is unrecoverable across VPS lifecycles.** Model B relies on the upload-then-destroy sequence being atomic. My `stop()` sketch above uploads before destroying — do NOT skip the verify step.
-- **RCON over the internet.** The controller needs to reach `<mc-vps-ip>:25575`. Either open port 25575 with a strong RCON password, or set up a private Hetzner network between controller and MC VPS.
+- **First boot from snapshot is slow.** Cloud-init runs, world downloads from S3, MC starts. Expect 2–4 min. The bot's `/start-server` polls for 5 min before giving up — usually fine.
+- **World integrity across VPS lifecycles is critical.** The `HetznerBackend.stop()` path is upload → dual-verify (SSH script exit code + independent S3 object count) → then delete. Do not disable the verify step. If verification fails, the VPS stays up so you can SSH in and rescue the world manually.
+- **RCON over the internet.** The controller reaches `<mc-vps-ip>:25575` with `RCON_PASSWORD`. Pick a strong password, and consider adding a firewall rule allowing 25575 only from the controller's public IP.
+- **Orphan MC VPS.** If the controller crashes during a `/start-server`, the created VPS keeps running. On restart, the control-API tries to adopt it (looking for `label:mc-ondemand=1`). If adoption fails, delete the VPS manually in the Hetzner console.
+- **Snapshots age.** The snapshot bakes in a specific Docker version + repo commit. Periodically boot from the snapshot, `git pull`, `apt upgrade`, re-snapshot. Delete the old snapshot after to stop paying for it.
 
 ---
 

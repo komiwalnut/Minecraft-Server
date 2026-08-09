@@ -4,3 +4,7 @@ pydantic==2.10.3
 mcrcon==0.7.0
 python-dotenv==1.0.1
 httpx==0.28.1
+
+# Hetzner backend only. Install if MODE=hetzner; harmless otherwise.
+boto3==1.35.72
+paramiko==3.5.0
