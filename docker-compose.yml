@@ -14,7 +14,7 @@
 # this same path will be the mount point for object-storage-backed volume.
 
 x-mc-common: &mc-common
-  image: itzg/minecraft-server:java21
+  image: itzg/minecraft-server:latest
   stdin_open: true
   tty: true
   ports:
@@ -33,6 +33,9 @@ x-mc-common: &mc-common
     # World gen / gameplay defaults suitable for <10 players.
     DIFFICULTY: "normal"
     MAX_PLAYERS: "10"
+    # Disable MC's built-in pause-when-empty. It stops the server thread,
+    # which makes RCON hang - our control-API idle watcher handles shutdown instead.
+    PAUSE_WHEN_EMPTY_SECONDS: "0"
     VIEW_DISTANCE: "10"
     SIMULATION_DISTANCE: "8"
     # itzg image quirk: setting MEMORY leaves both -Xmx and -Xms up to the
