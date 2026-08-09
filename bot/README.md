@@ -13,14 +13,12 @@ commands/
   server-status.js
 ```
 
-Pattern matches Jobbilee (`../reference/Jobbilee/bot.js`) so if you already know that bot, you already know this one.
-
 ## First-time Discord setup
 
-1. Create a **new** application at https://discord.com/developers/applications (don't reuse Jobbilee's).
+1. Create an application at https://discord.com/developers/applications.
 2. Under **Bot** → reset the token → copy it into `bot/.env` as `DISCORD_TOKEN`.
-3. Under **OAuth2 → URL Generator**, scopes `bot` + `applications.commands`. Permissions: `Send Messages`, `Embed Links`. Invite the bot to your server with the generated URL.
-4. Get your admin role ID (Discord → Settings → Advanced → Developer Mode ON → right-click role → Copy Role ID) and put it in `bot/.env` as `MC_ADMIN_ROLE_ID`. Default in code matches yours: `1535796235376795728`.
+3. Under **OAuth2 → URL Generator**, scopes `bot` + `applications.commands`. Permissions: `View Channel`, `Send Messages`, `Embed Links` (integer `19456`). Leave all Privileged Gateway Intents OFF. Invite the bot to your server with the generated URL.
+4. Get your admin role ID (Discord → Settings → Advanced → Developer Mode ON → right-click role → Copy Role ID) and put it in `bot/.env` as `MC_ADMIN_ROLE_ID`. Default in code: `1535796235376795728`.
 
 ## Local dev
 
@@ -39,20 +37,25 @@ Logged in as YourBot#1234
 Registered 3 slash command(s): /start-server, /stop-server, /server-status
 ```
 
-**The bot MUST run locally during Phase 3 dev** because the control-API listens on `localhost:8080` and a bot hosted on Render can't reach that.
+**During local dev the bot must run locally too** — a bot on Render can't reach `localhost:8080` on your machine. If you also have a Render deploy, suspend the Render service while testing locally. See [../docs/LOCAL-DEV.md](../docs/LOCAL-DEV.md).
 
-## Deploying to Render (later)
+## Deploying to Render
 
-Once the Hetzner VPS is up and the control-API is reachable at a public URL:
+Render supports monorepo deploys via the **Root Directory** setting.
 
-1. Push this `bot/` directory to a GitHub repo (or use monorepo root + `bot/` root-directory setting).
-2. Render → New → Web Service → connect the repo.
-3. Environment variables — set all of:
-   - `DISCORD_TOKEN`
-   - `CONTROL_API_URL` = `https://<vps-hostname>`
-   - `CONTROL_API_TOKEN` = matching value from control-API
+1. Render → **New +** → **Web Service** → connect this repo.
+2. Service settings:
+   - **Root Directory:** `bot`
+   - **Runtime:** Node
+   - **Build Command:** `npm install`
+   - **Start Command:** `npm start`
+   - **Region:** Singapore (matches your Hetzner target)
+3. Environment variables:
+   - `DISCORD_TOKEN` — from Discord Developer Portal
+   - `CONTROL_API_URL` — the URL of your deployed control-API (see [../docs/DEPLOY-HETZNER.md](../docs/DEPLOY-HETZNER.md))
+   - `CONTROL_API_TOKEN` — matching value from the control-API's `.env`
    - `MC_ADMIN_ROLE_ID`
-4. Set up UptimeRobot to ping the Render URL every 5 min (same trick Jobbilee uses).
+4. Prevent free-tier spin-down: create an UptimeRobot HTTP monitor for the Render URL, 5-min interval.
 
 ## Commands
 

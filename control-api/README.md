@@ -1,11 +1,11 @@
 # control-api — HTTP layer between the bot and the server backend
 
-FastAPI service listening on `localhost:8080`. Talks to a pluggable backend:
+FastAPI service listening on `localhost:8080` (or `0.0.0.0:8080` in production). Talks to a pluggable backend:
 
-- `MODE=local`   → `backends/local_docker.py` (Phase 1/2 dev)
-- `MODE=hetzner` → `backends/hetzner.py` (production; stubbed today)
+- `MODE=local`   → `backends/local_docker.py` — manages a Docker container on the same host. Used both for local dev and for the "Always-on VPS" cloud deployment.
+- `MODE=hetzner` → `backends/hetzner.py` — provisions Hetzner Cloud VPS on demand. Currently stubbed; see [../docs/DEPLOY-HETZNER.md](../docs/DEPLOY-HETZNER.md) Model B for the implementation guide.
 
-The Discord bot never talks to Docker or Hetzner directly — it calls this API. Migration is a one-line `.env` change: flip `MODE=local` to `MODE=hetzner` and restart the API. No bot code changes.
+The Discord bot never talks to Docker or Hetzner directly — it calls this API. Switching backends is a one-line `.env` change: `MODE=local` → `MODE=hetzner` and restart. No bot code changes.
 
 ## Endpoints
 
@@ -24,7 +24,7 @@ A background thread polls `/status` every 60s. If `state == running` and `player
 
 ## Local dev
 
-Requires the Phase 1 Docker setup to be reachable via `docker compose` from this repo root.
+Requires Docker to be reachable via `docker compose` from the repo root (Docker Desktop on Windows/macOS, Docker Engine on Linux). Full local-dev walkthrough: [../docs/LOCAL-DEV.md](../docs/LOCAL-DEV.md).
 
 ```powershell
 cd control-api
@@ -53,14 +53,9 @@ curl -H "Authorization: Bearer changeme_local_only" -H "Content-Type: applicatio
 
 No other file needs to change.
 
-## Migration checklist: local → Hetzner
+## Deploying to a cloud host
 
-1. Provision a Hetzner Cloud VPS (CPX21 or CPX31 per your Phase 2 findings).
-2. Install Docker on the VPS, `git clone` this repo there, run the server once to generate the world.
-3. Snapshot the VPS in the Hetzner console — record the snapshot ID.
-4. Create an Object Storage bucket for world backups.
-5. Implement the three method bodies in `backends/hetzner.py` (docstring in that file has the sketch).
-6. Fill `.env` with all `HETZNER_*` fields, set `MODE=hetzner`, restart uvicorn.
-7. Update the bot's `CONTROL_API_URL` env var to point at the VPS.
+Two deployment models documented in [../docs/DEPLOY-HETZNER.md](../docs/DEPLOY-HETZNER.md):
 
-Done. No bot code, no compose file, no script changes.
+- **Always-on VPS** — run this control-API + a Docker container on one Hetzner VPS. `MODE=local` on the VPS. No code changes needed.
+- **On-demand VPS** — a tiny controller runs this control-API in `MODE=hetzner`, provisioning MC VPS on demand. Requires implementing the three methods in `backends/hetzner.py`.
